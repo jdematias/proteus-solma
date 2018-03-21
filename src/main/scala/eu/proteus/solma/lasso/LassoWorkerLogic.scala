@@ -23,6 +23,7 @@ import eu.proteus.solma.lasso.Lasso.{LassoModel, LassoParam, OptionLabeledVector
 import eu.proteus.solma.lasso.LassoStreamEvent.LassoStreamEvent
 import eu.proteus.solma.lasso.algorithm.{FlatnessMappingAlgorithm, LassoAlgorithm, LassoBasicAlgorithm}
 import hu.sztaki.ilab.ps.{ParameterServerClient, WorkerLogic}
+import eu.proteus.solma.utils.FileUtils
 
 import scala.collection.mutable
 
@@ -36,15 +37,19 @@ class LassoWorkerLogic (modelBuilder: ModelBuilder[LassoParam, LassoModel],
 
   override def onRecv(data: LassoStreamEvent,
                       ps: ParameterServerClient[LassoParam, ((Long, Double), Double)]): Unit = {
+
     data match {
       case Left(v) =>
+        FileUtils.writeCutreLog("Measurement: " + v.pos._1.toString + "," + v.pos._2.toString)
         if (!unlabeledVecs.keys.exists(x => x == v.pos._1)) {
           unlabeledVecs(v.pos._1) = new mutable.Queue[StreamEventWithPos[(Long, Double)]]()
         }
         unlabeledVecs(v.pos._1).enqueue(v)
         unpredictedVecs.enqueue(data)
+        FileUtils.writeCutreLog("Pull-Measurement")
         ps.pull(0)
       case Right(v) =>
+        FileUtils.writeCutreLog("Flatness:" + v.label.toString)
         if (unlabeledVecs.keys.exists(x => x == v.label)) {
           val poses = unlabeledVecs(v.label).toVector.map(x => x.pos._2)
           var labels = Vector[(Double, Double)]()
@@ -65,7 +70,9 @@ class LassoWorkerLogic (modelBuilder: ModelBuilder[LassoParam, LassoModel],
             }
           )
           labeledVecs ++= processedEvents
+          FileUtils.writeCutreLog("He etiquetado: " + processedEvents.size.toString + " measurements")
         }
+        FileUtils.writeCutreLog("Pull-Flatness")
         ps.pull(0)
     }
   }
@@ -75,6 +82,9 @@ class LassoWorkerLogic (modelBuilder: ModelBuilder[LassoParam, LassoModel],
                           ps: ParameterServerClient[LassoParam, ((Long, Double), Double)]):Unit = {
 
     var model: Option[LassoModel] = None
+
+    FileUtils.writeCutreLog("Recibo el modelo y hay " + unpredictedVecs.size + " vectores para predecir")
+    FileUtils.writeCutreLog("Recibo el modelo y hay " + labeledVecs.size + " vectores para aprender")
 
     while (unpredictedVecs.nonEmpty) {
       val dataPoint = unpredictedVecs.dequeue()
@@ -90,6 +100,9 @@ class LassoWorkerLogic (modelBuilder: ModelBuilder[LassoParam, LassoModel],
       }
     }
     if (model.nonEmpty) {
+      FileUtils.writeCutreLog(model.get._1.toString)
+      FileUtils.writeCutreLog(model.get._2.toString)
+      FileUtils.writeCutreLog("Push - He actualizado el modelo")
       ps.push(0, model.get)
     }
   }
