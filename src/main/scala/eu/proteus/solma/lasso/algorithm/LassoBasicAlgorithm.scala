@@ -46,22 +46,23 @@ abstract class LassoBasicAlgorithm(protected val aggressiveness: Double)
 
   override def delta(dataPoint: OptionLabeledVector,
                      model: LassoModel,
-                     label: Double): Iterable[(Int, LassoParam)] = {
+                     label: Double, lastPrediction: Double): Iterable[(Int, LassoParam)] = {
     val x_t: DenseVector[Double] = dataPoint match {
       case Left((vec, _)) => vec._2.toDenseVector
       case Right(vec) => vec._2.toDenseVector
     }
-    val gamma = model._3
+    val lambda = model._3
 
     val a_t: DenseMatrix[Double] = x_t.asDenseMatrix.t * x_t.asDenseMatrix
 
-    val A_t: DenseMatrix[Double] = model._1 + a_t + inv(diag(DenseVector.fill(model._1.rows){sqrt(abs(gamma))}))
+    val A_t: DenseMatrix[Double] = model._1 + a_t +
+      lambda * pinv(diag(DenseVector.fill(model._1.rows){lastPrediction/*sqrt(abs(gamma))*/}))
 
-    val newLabel = model._2.asDenseMatrix * inv(A_t) * x_t.asDenseMatrix.t
+    val newLabel = model._2.asDenseMatrix * pinv(A_t) * x_t.asDenseMatrix.t
 
     val l_t: DenseVector[Double] = model._2 + label * x_t
 
-    Array((0, (A_t, l_t, gamma))).toIterable
+    Array((0, (A_t, l_t, lambda))).toIterable
   }
 
   /**
@@ -87,7 +88,7 @@ abstract class LassoBasicAlgorithm(protected val aggressiveness: Double)
     val A_t = model._1
     val b_t = model._2
 
-    val y_t = b_t.toDenseMatrix * inv(A_t) * x_t
+    val y_t = b_t.toDenseMatrix * pinv(A_t) * x_t
 
     (id, y_t.data(0))
   }

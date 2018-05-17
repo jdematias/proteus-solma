@@ -26,6 +26,7 @@ import eu.proteus.solma.lasso.Lasso.{LassoModel, LassoParam, OptionLabeledVector
 import eu.proteus.solma.lasso.LassoStreamEvent.LassoStreamEvent
 import eu.proteus.solma.lasso.algorithm.{FlatnessMappingAlgorithm, LassoAlgorithm, LassoBasicAlgorithm}
 import hu.sztaki.ilab.ps.{ParameterServerClient, WorkerLogic}
+import eu.proteus.solma.utils.FileUtils
 
 import scala.collection.mutable
 
@@ -43,6 +44,7 @@ class LassoWorkerLogic (modelBuilder: ModelBuilder[LassoParam, LassoModel],
   val labeledVecs = new mutable.Queue[OptionLabeledVector]
   var missingValues: collection.mutable.HashMap[Int, Double] = collection.mutable.HashMap[Int, Double]()
   LassoWorkerLogic.defaultValues.foreach(x => missingValues(x._1) = x._2)
+  var lastPrediction: Double = 0.0
   val maxTTL: Long = 60 * 60 * 1000
 
   override def onRecv(data: LassoStreamEvent,
@@ -79,25 +81,38 @@ class LassoWorkerLogic (modelBuilder: ModelBuilder[LassoParam, LassoModel],
         if (unlabeledVecs.keys.exists(x => x == v.label)) {
           val dequeueElements = unlabeledVecs(v.label)._2.dequeueAll(x => true).toVector
           unlabeledVecs -= v.label
-          val poses = dequeueElements.map(x => x.pos._2)
+          val poses = dequeueElements.map(x => x.pos._2 / 10)
           var labels = Vector[(Double, Double)]()
 
           for (i <- 0 until v.labels.data.length) {
             labels = (v.poses(i), v.labels(i)) +: labels
           }
 
+          FileUtils.writeSimpleLog("Labels-Poses: " + poses.toArray.mkString(", "))
+          FileUtils.writeSimpleLog("Labels: " + labels.toArray.mkString(", "))
+
           val interpolatedLabels = new FlatnessMappingAlgorithm(poses, labels).apply
+
+          FileUtils.writeSimpleLog("Interpolated_Labels: " + interpolatedLabels.toArray.mkString(", "))
 
           val processedEvents: Iterable[OptionLabeledVector] = dequeueElements.zipWithIndex.map(
             zipped => {
-              val data: BreezeVector[Double] = DenseBreezeVector.fill(76){0.0}
-              data(zipped._1.slice.head) = zipped._1.data(zipped._1.slice.head)
-              val vec: OptionLabeledVector = Left(((zipped._1.pos, data), interpolatedLabels(zipped._2)))
-              vec
+              //val data: BreezeVector[Double] = DenseBreezeVector.fill(featureCount){0.0}
+              //data(zipped._1.slice.head) = zipped._1.data(zipped._1.slice.head)
+              if ( ( (zipped._1.pos._2 / 10) <= labels.toArray.head._1)
+                && ((zipped._1.pos._2 / 10) >= labels.toArray.last._1) ) {
+                val vec: OptionLabeledVector = Left(((zipped._1.pos, zipped._1.data.asBreeze /*data*/ ),
+                  interpolatedLabels(zipped._2)))
+                Some(vec)
+              }
+              else {
+                None
+              }
             }
-          )
+          ).filter(x => x.nonEmpty).map(x => x.get)
           labeledVecs ++= processedEvents
         }
+        //FileUtils.writeSimpleLog("Pull-Flatness: (" + v.label + ")")
         ps.pull(0)
     }
     unlabeledVecs = unlabeledVecs.filter(x => now - x._2._1 < maxTTL)
@@ -113,17 +128,23 @@ class LassoWorkerLogic (modelBuilder: ModelBuilder[LassoParam, LassoModel],
     while (unpredictedVecs.nonEmpty) {
       val dataPoint = unpredictedVecs.dequeue()
       val prediction = lassoMethod.predict(LassoBasicAlgorithm.toOptionLabeledVector(dataPoint), modelValue)
+      lastPrediction = prediction._2
+      FileUtils.writeSimpleLog("Output: (" + prediction._1._1 + ", " + prediction._1._2 + ")" + "-> " + prediction._2)
       ps.output(prediction)
     }
 
     while (labeledVecs.nonEmpty) {
       val restedData = labeledVecs.dequeue()
       restedData match {
-        case Left(v) => model = Some(lassoMethod.delta(restedData, modelValue, v._2).head._2)
+        case Left(v) =>
+          FileUtils.writeSimpleLog("Train: (" + v._1._1._1 + ", " + v._1._1._2 + ") - " + v._2 + "; "
+            + v._1._2.toArray.mkString(","))
+          model = Some(lassoMethod.delta(restedData, modelValue, v._2, lastPrediction).head._2)
         case Right(v) => //It must not be processed here
       }
     }
     if (model.nonEmpty) {
+      //FileUtils.writeSimpleLog("Push-model")
       ps.push(0, model.get)
     }
   }

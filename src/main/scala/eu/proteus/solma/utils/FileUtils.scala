@@ -14,18 +14,24 @@
  * limitations under the License.
  */
 
-package eu.proteus.solma.lasso.algorithm
+package eu.proteus.solma.utils
 
-/**
-  * Common trait for Lasso algorithm.
-  */
+import java.io.FileWriter
+import java.text.SimpleDateFormat
+import java.util.Calendar
 
-trait LassoAlgorithm[Vec, Param, Label, Model] extends Serializable {
+object FileUtils {
 
-  def delta(data: Vec,
-            model: Model,
-            label: Double, lastPrediction: Double): Iterable[(Int, Param)]
+  def writeSimpleLog(message: String): Unit = {
+    val now = Calendar.getInstance().getTime
+    val fw = new FileWriter("/tmp/LassoLog.txt", true)
+    val timeFormat = new SimpleDateFormat("yyyy.MM.dd 'at' HH:mm:ss")
+    val currentTimeAsString = timeFormat.format(now)
 
-  def predict(dataPoint: Vec, model: Model): Label
+    try {
+      fw.write(currentTimeAsString + " - " + message + "\n")
+    }
+    finally fw.close()
+  }
 
 }

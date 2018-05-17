@@ -60,7 +60,7 @@ class LassoBasicAlgorithmTest extends FlatSpec with PropertyChecks with Matchers
       if (processedSamples < TRAIN_SAMPLES) {
         // TRAIN THE MODEL
         val dataPoint = lineToDataPoint(line)
-        val newModel = basicAlgorithm.delta(dataPoint, model, dataPoint.left.get._2)
+        val newModel = basicAlgorithm.delta(dataPoint, model, dataPoint.left.get._2, 0.0)
         model = newModel.head._2
       }
       else {
