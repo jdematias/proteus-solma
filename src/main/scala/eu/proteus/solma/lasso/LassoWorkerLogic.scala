@@ -43,6 +43,7 @@ class LassoWorkerLogic (modelBuilder: ModelBuilder[LassoParam, LassoModel],
   val labeledVecs = new mutable.Queue[OptionLabeledVector]
   var missingValues: collection.mutable.HashMap[Int, Double] = collection.mutable.HashMap[Int, Double]()
   LassoWorkerLogic.defaultValues.foreach(x => missingValues(x._1) = x._2)
+  var lastPrediction: Double = 0.0
   val maxTTL: Long = 60 * 60 * 1000
 
   override def onRecv(data: LassoStreamEvent,
@@ -90,12 +91,18 @@ class LassoWorkerLogic (modelBuilder: ModelBuilder[LassoParam, LassoModel],
 
           val processedEvents: Iterable[OptionLabeledVector] = dequeueElements.zipWithIndex.map(
             zipped => {
-              val data: BreezeVector[Double] = DenseBreezeVector.fill(76){0.0}
-              data(zipped._1.slice.head) = zipped._1.data(zipped._1.slice.head)
-              val vec: OptionLabeledVector = Left(((zipped._1.pos, data), interpolatedLabels(zipped._2)))
-              vec
+
+              if ( ( zipped._1.pos._2 <= labels.toArray.head._1)
+                && (zipped._1.pos._2 >= labels.toArray.last._1) ) {
+                val vec: OptionLabeledVector = Left(((zipped._1.pos, zipped._1.data.asBreeze),
+                  interpolatedLabels(zipped._2)))
+                Some(vec)
+              }
+              else {
+                None
+              }
             }
-          )
+          ).filter(x => x.nonEmpty).map(x => x.get)
           labeledVecs ++= processedEvents
         }
         ps.pull(0)
@@ -113,13 +120,14 @@ class LassoWorkerLogic (modelBuilder: ModelBuilder[LassoParam, LassoModel],
     while (unpredictedVecs.nonEmpty) {
       val dataPoint = unpredictedVecs.dequeue()
       val prediction = lassoMethod.predict(LassoBasicAlgorithm.toOptionLabeledVector(dataPoint), modelValue)
+      lastPrediction = prediction._2
       ps.output(prediction)
     }
 
     while (labeledVecs.nonEmpty) {
       val restedData = labeledVecs.dequeue()
       restedData match {
-        case Left(v) => model = Some(lassoMethod.delta(restedData, modelValue, v._2).head._2)
+        case Left(v) => model = Some(lassoMethod.delta(restedData, modelValue, v._2, lastPrediction).head._2)
         case Right(v) => //It must not be processed here
       }
     }
